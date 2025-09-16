@@ -4,13 +4,15 @@ import os
 from openai import OpenAI
 from sklearn.feature_extraction.text import TfidfVectorizer
 import numpy as np
-from dotenv import load_dotenv
- 
-load_dotenv()
-api_key = os.getenv("OPENAI_API_KEY")
-client = OpenAI(api_key=api_key)
+# from dotenv import load_dotenv  # REMOVE this line
+
+# load_dotenv()  # REMOVE this line
+# api_key = os.getenv("OPENAI_API_KEY")  # REMOVE this line
 
 st.title("Ask Questions About Your PDF Book")
+
+# NEW: Let user input their OpenAI API key
+user_api_key = st.text_input("Enter your OpenAI API key:", type="password")
 
 uploaded_file = st.file_uploader("Upload a PDF book", type="pdf")
 pdf_text_pages = []  
@@ -42,8 +44,12 @@ if uploaded_file is not None:
 
         question = st.text_input("Ask a question about the book:")
 
-        if question:
+        # Only proceed if user provided an API key
+        if question and user_api_key:
             with st.spinner("Thinking..."):
+                # Initialize OpenAI client with user key
+                client = OpenAI(api_key=user_api_key)
+
                 relevant_pages_idx = find_relevant_pages(question, vectorizer, embeddings, top_k=2)
                 context_text = "\n\n".join([f"Page {i+1}:\n{pdf_text_pages[i]}" for i in relevant_pages_idx])
 
@@ -73,6 +79,7 @@ Answer:
 
                 st.markdown(f"**Answer:** {answer_text}")
                 st.markdown(f"**Source Pages:** {pages_used}")
-
+        elif question and not user_api_key:
+            st.warning("Please enter your OpenAI API key to ask questions.")
 else:
     st.info("Please upload a PDF to get started.")
