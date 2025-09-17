@@ -16,18 +16,23 @@ class TextbookTutor:
         self.chroma_client = chromadb.Client()
         self.collection = self.chroma_client.create_collection(name="textbook")
         
+    def semantic_sections(self, text):
+        """Generate semantic sections from text."""
+        return text.split("\n\n")
+    
     def load_textbook(self, pages):
-        """Load textbook pages into ChromaDB with embeddings."""
-        self.pages = pages
-        for i, page in enumerate(pages):
-            emb = self.embedder.encode([page])[0].tolist()
+        full_text = "\n".join(pages)
+        sections = self.semantic_sections(full_text)
+        self.sections = sections
+        for i, section in enumerate(sections):
+            emb = self.embedder.encode([section])[0].tolist()
             self.collection.add(
                 ids=[str(i)],
                 embeddings=[emb],
-                documents=[page],
-                metadatas=[{"page": i+1}]
+                documents=[section],
+                metadatas=[{"section": i+1}]
             )
-        print(f"✅ Loaded {len(pages)} pages into ChromaDB")
+        print(f"✅ Loaded {len(sections)} semantic sections into ChromaDB")
         
     def _find_relevant_chunks(self, query, top_k=2):
         """Retrieve top-k relevant chunks from ChromaDB."""
