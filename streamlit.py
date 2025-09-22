@@ -31,8 +31,7 @@ def find_relevant_pages(query, vectorizer, embeddings, top_k=2):
     scores = np.dot(query_vec, embeddings.T).toarray()[0]
     return np.argsort(scores)[::-1][:top_k]
 
-
-uploaded_file = None
+# --- PDF yükleme ---
 if book_choice == "Upload your own PDF":
     uploaded_file = st.file_uploader("Upload a PDF book", type="pdf")
     if not uploaded_file:
@@ -49,57 +48,79 @@ else:
 
 vectorizer, embeddings = build_index(pdf_text_pages)
 
-
+# --- Chat history ---
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
+# --- Kullanıcı input ---
 prompt = st.chat_input("Ask about your book")
 if prompt:
-    with st.spinner("Thinking..."):
-        client = OpenAI(api_key=user_api_key)
-        relevant_pages_idx = find_relevant_pages(prompt, vectorizer, embeddings, top_k=2)
-        context_text = "\n\n".join([f"Page {i+1}:\n{pdf_text_pages[i]}" for i in relevant_pages_idx])
+    st.session_state.chat_history.append({
+        "question": prompt,
+        "answer": None,
+        "pages_used": []
+    })
 
-        # Build the messages list from chat history
-        messages = [{"role": "system", "content": "You are a helpful assistant. Use ONLY the information from the provided textbook pages to answer. Do NOT add external knowledge. Mention which page(s) the answer came from."}]
+# --- Chat alanı (container ile dinamik alan) ---
+chat_area = st.container()
 
-        for entry in st.session_state.chat_history:
-            messages.append({"role": "user", "content": entry["question"]})
-            messages.append({"role": "assistant", "content": entry["answer"]})
+with chat_area:
+    if st.session_state.chat_history:
+        st.subheader("Chat History")
+        for i, entry in enumerate(st.session_state.chat_history):
+            with st.chat_message("user"):
+                st.markdown(f"**You:** {entry['question']}")
+            if entry["answer"]:
+                with st.chat_message("assistant"):
+                    st.markdown(f"**Answer:** {entry['answer']}")
+                    st.markdown("**Sources:**")
+                    for idx in entry["pages_used"]:
+                        if 0 <= idx-1 < len(pdf_text_pages):
+                            section_text = pdf_text_pages[idx-1].strip()
+                            snippet = section_text[:300] + ("..." if len(section_text) > 300 else "")
+                            with st.expander(f"Page {idx}"):
+                                st.write(snippet)
 
-        # Add the current user question, with context
-        messages.append({"role": "user", "content": f"Textbook content:\n{context_text}\n\nQuestion: {prompt}\nAnswer:"})
+# --- Cevap üretme (rerun yok, sadece güncelleme) ---
+for i, entry in enumerate(st.session_state.chat_history):
+    if entry["answer"] is None:
+        with st.spinner("Thinking..."):
+            client = OpenAI(api_key=user_api_key)
+            relevant_pages_idx = find_relevant_pages(entry["question"], vectorizer, embeddings, top_k=2)
+            context_text = "\n\n".join([f"Page {j+1}:\n{pdf_text_pages[j]}" for j in relevant_pages_idx])
 
-        response = client.chat.completions.create(
-            model="gpt-4.1-nano",
-            messages=messages,
-            temperature=0.2,
-            max_tokens=500
-        )
+            messages = [
+                {"role": "system", "content": "You are a helpful assistant. Use ONLY the information from the provided textbook pages to answer. Do NOT add external knowledge. Mention which page(s) the answer came from."}
+            ]
+            for prev in st.session_state.chat_history[:i]:
+                messages.append({"role": "user", "content": prev["question"]})
+                messages.append({"role": "assistant", "content": prev["answer"]})
 
-        answer_text = response.choices[0].message.content.strip()
-        pages_used = [i+1 for i in relevant_pages_idx]
+            messages.append({"role": "user", "content": f"Textbook content:\n{context_text}\n\nQuestion: {entry['question']}\nAnswer:"})
 
-        # Add immediately to chat history
-        st.session_state.chat_history.append({
-            "question": prompt,
-            "answer": answer_text,
-            "pages_used": pages_used
-        })
+            response = client.chat.completions.create(
+                model="gpt-4.1-nano",
+                messages=messages,
+                temperature=0.2,
+                max_tokens=500
+            )
 
-# --- Move chat display here so it always shows latest state ---
-if st.session_state.chat_history:
-    st.subheader("Chat History")
-    for entry in st.session_state.chat_history:
-        st.chat_message("user").write(f"**You:** {entry['question']}")
-        st.chat_message("assistant").write(f"**Answer:** {entry['answer']}")
+            answer_text = response.choices[0].message.content.strip()
+            pages_used = [j+1 for j in relevant_pages_idx]
 
-        # Display each source page/section with its relevant text
-        st.markdown("**Sources:**")
-        for idx in entry["pages_used"]:
-            # idx is 1-based, so subtract 1 for list index
-            section_text = pdf_text_pages[idx - 1].strip() if 0 <= idx - 1 < len(pdf_text_pages) else ""
-            # Optionally, show only a snippet (e.g., first 300 chars)
-            snippet = section_text[:300] + ("..." if len(section_text) > 300 else "")
-            with st.expander(f"Section {idx}"):
-                st.write(snippet)
+            # Cevabı güncelle
+            st.session_state.chat_history[i]["answer"] = answer_text
+            st.session_state.chat_history[i]["pages_used"] = pages_used
+
+            # Chat alanını tekrar çiz (sayfa komple yenilenmeden)
+            with chat_area:
+                with st.chat_message("assistant"):
+                    st.markdown(f"**Answer:** {answer_text}")
+                    st.markdown("**Sources:**")
+                    for idx in pages_used:
+                        if 0 <= idx-1 < len(pdf_text_pages):
+                            section_text = pdf_text_pages[idx-1].strip()
+                            snippet = section_text[:300] + ("..." if len(section_text) > 300 else "")
+                            with st.expander(f"Page {idx}"):
+                                st.write(snippet)
+        break
